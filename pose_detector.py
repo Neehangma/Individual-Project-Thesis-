@@ -23,6 +23,9 @@ class PoseDetector:
 
     def __init__(self, min_visibility: float = 0.55) -> None:
         self.min_visibility = min_visibility
+        self._selected_side: str | None = None
+        self._challenger_side: str | None = None
+        self._challenger_frames = 0
         self._pose = mp.solutions.pose.Pose(
             static_image_mode=False,
             model_complexity=1,
@@ -58,17 +61,48 @@ class PoseDetector:
         )
         landmarks = result.pose_landmarks.landmark
         arms = {
-            "left": (self._landmark.LEFT_SHOULDER, self._landmark.LEFT_ELBOW, self._landmark.LEFT_WRIST),
-            "right": (self._landmark.RIGHT_SHOULDER, self._landmark.RIGHT_ELBOW, self._landmark.RIGHT_WRIST),
+            "LEFT": (self._landmark.LEFT_SHOULDER, self._landmark.LEFT_ELBOW, self._landmark.LEFT_WRIST),
+            "RIGHT": (self._landmark.RIGHT_SHOULDER, self._landmark.RIGHT_ELBOW, self._landmark.RIGHT_WRIST),
         }
         candidates = []
         for side, indices in arms.items():
             points = [landmarks[index.value] for index in indices]
             visibility = min(float(point.visibility) for point in points)
             candidates.append((visibility, side, indices, points))
-        visibility, side, indices, points = max(candidates, key=lambda item: item[0])
-        if visibility < self.min_visibility:
-            return annotated, PoseObservation(None, side, visibility, "Arm landmarks unclear")
+        best = max(candidates, key=lambda item: item[0])
+        by_side = {candidate[1]: candidate for candidate in candidates}
+        current = by_side.get(self._selected_side)
+
+        # Keep the current anatomical side through small frame-to-frame
+        # confidence changes. Switch only after a clear, sustained improvement,
+        # or immediately if the current arm is no longer reliably visible.
+        if current is None or current[0] < self.min_visibility:
+            selected = best if best[0] >= self.min_visibility else None
+            self._challenger_side = None
+            self._challenger_frames = 0
+        elif best[1] == self._selected_side or best[0] <= current[0] + 0.15:
+            selected = current
+            self._challenger_side = None
+            self._challenger_frames = 0
+        else:
+            if self._challenger_side == best[1]:
+                self._challenger_frames += 1
+            else:
+                self._challenger_side = best[1]
+                self._challenger_frames = 1
+            if self._challenger_frames >= 5:
+                selected = best
+                self._challenger_side = None
+                self._challenger_frames = 0
+            else:
+                selected = current
+
+        if selected is None:
+            self._selected_side = None
+            return annotated, PoseObservation(None, None, best[0], "Arm landmarks unclear")
+
+        visibility, side, indices, points = selected
+        self._selected_side = side
 
         height, width = annotated.shape[:2]
         pixels = []

@@ -32,11 +32,13 @@ def main() -> int:
             if not ok:
                 print("Camera stopped returning frames. Check the webcam connection and try again.")
                 break
-            frame = cv2.flip(frame, 1)
             annotated, observation = detector.process(frame)
+            # Run inference on the camera's original orientation so MediaPipe's
+            # anatomical LEFT/RIGHT labels stay correct. Mirror only the view.
+            annotated = cv2.flip(annotated, 1)
             cv2.rectangle(annotated, (0, 0), (annotated.shape[1], 88), (35, 35, 35), -1)
             angle_text = f"{observation.angle_degrees:.1f} deg" if observation.angle_degrees is not None else "--"
-            side_text = observation.arm_side.title() if observation.arm_side else "--"
+            side_text = observation.arm_side if observation.arm_side else "--"
             cv2.putText(annotated, f"Elbow angle: {angle_text}     Arm: {side_text}", (18, 35),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
             cv2.putText(annotated, f"{observation.status}  |  visibility {observation.visibility:.2f}",
