@@ -1,7 +1,8 @@
 # Elbow Rehabilitation Exercise Monitor
 
-Milestone 1 prototype: live webcam pose landmarks and an estimated elbow angle.
-The camera image is processed locally and is not saved.
+Live webcam capture prototype for elbow flexion and extension. It estimates the
+2D elbow angle with MediaPipe Pose and saves measurements locally for later
+analysis. Camera images and video are not saved.
 
 ## Setup (Windows, Python 3.11)
 
@@ -15,27 +16,54 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-The prototype opens the default webcam (device 0). Press **Q** or **Esc** while
-the camera window is focused to quit. If another device is required, use
-`python app.py --camera 1`. If tracking is too permissive or too strict, adjust
-the visibility cutoff, for example `python app.py --visibility 0.65`.
+The default camera index is 0. If needed, select another webcam with
+`python app.py --camera 1`.
 
-## Camera positioning and angle check
+## Live camera controls
 
-Place the camera at roughly elbow height, stand far enough away to keep the
-shoulder, elbow, and wrist visible, and turn so the moving arm is seen from the
-side. Move slowly through a bend and straighten cycle. The highlighted shoulder,
-elbow, and wrist should follow the arm, and the displayed angle should change
-with the movement. A straighter arm generally produces an angle nearer 180°;
-bending reduces the measured angle. Either arm can be selected, based on the
-visibility of its three landmarks. Weak visibility displays a warning instead
-of an angle.
+- **S**: start a session after a three-second get-ready countdown.
+- **P**: pause or resume capture. The session timer excludes paused time.
+- **Q** or **Esc**: end capture and save the session files.
+- **R**: reset set and rep progress while preserving the observations already
+  captured in the current session.
 
-This is an estimated 2D image-based angle from one webcam. It is not a
-clinically validated three-dimensional measurement and is not medical advice.
+The live screen shows the raw/smoothed elbow angle, detected anatomical arm
+side, landmark visibility, movement phase, set and rep progress, session timer,
+and a target-range bar. Low-visibility frames are marked invalid, excluded from
+smoothing and repetition counting, and retained in the CSV with their validity
+flag. Live guidance is limited to tracking and capture status; detailed feedback
+is intended for a later post-session view.
 
-## Files
+## Capture settings
 
-- `app.py`: camera loop and live OpenCV display.
-- `pose_detector.py`: pretrained MediaPipe Pose inference and landmark drawing.
-- `angle_calculator.py`: geometric elbow angle calculation.
+The constants at the top of `app.py` control visibility threshold, five-frame
+moving average, flexed and extended thresholds, target range, set/rep target,
+inter-set rest, and get-ready countdown. Initial defaults are 3 sets of 10,
+flexed below 60°, extended at or above 150°, and target range 40°–150°. These
+are configurable software defaults, not universal clinical recommendations.
+
+## Session files
+
+Starting a session creates a `sessions/` directory if needed. On Q/Esc (or
+normal application exit), the session is saved as:
+
+- `session_YYYYMMDD_HHMMSS.csv`: one row per active capture frame with local
+  timestamp, elapsed session time, arm side, raw and smoothed angle, visibility,
+  phase, completed-rep count, set number, and `valid_frame`.
+- `session_YYYYMMDD_HHMMSS.json`: session duration, total reps, reps per set,
+  min/max angle, range of motion, average rep duration, average visibility,
+  low-visibility frame count, target range, and per-rep min/max/duration/target
+  range attainment. It also records the thresholds, visibility cutoff,
+  smoothing window, and set/rest configuration used for that capture.
+
+A numeric suffix is added if two sessions start within the same second. Files
+are local research measurements; use anonymised participant codes and the
+approved participant-consent procedure when collecting research data.
+
+## Camera positioning and limitations
+
+Place the camera around elbow height and keep the shoulder, elbow, and wrist in
+view. A side-on view usually makes the image-plane angle easier to interpret.
+Slowly bend and straighten to see the angle, phase, and repetition state respond.
+The angle is an estimate from a single webcam's 2D image, not a clinically
+validated three-dimensional measurement or medical advice.
