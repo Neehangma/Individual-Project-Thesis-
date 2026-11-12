@@ -14,7 +14,7 @@ from rep_counter import RepRecord
 
 FRAME_COLUMNS = (
     "timestamp", "elapsed_time", "arm_side", "raw_angle", "smoothed_angle",
-    "visibility", "phase", "rep_count", "set_number", "valid_frame",
+    "visibility", "phase", "movement_state", "rep_count", "set_number", "valid_frame",
 )
 
 
@@ -64,6 +64,7 @@ class SessionLogger:
         smoothed_angle: float | None,
         visibility: float,
         phase: str,
+        movement_state: str,
         rep_count: int,
         set_number: int,
         valid_frame: bool,
@@ -80,6 +81,7 @@ class SessionLogger:
             "smoothed_angle": "" if smoothed_angle is None else f"{smoothed_angle:.3f}",
             "visibility": f"{min(1.0, max(0.0, visibility)):.4f}",
             "phase": phase,
+            "movement_state": movement_state,
             "rep_count": int(rep_count),
             "set_number": int(set_number),
             "valid_frame": bool(valid_frame),

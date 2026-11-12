@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from pose_detector import PoseDetector
+from feedback_engine import FeedbackEngine
 from rep_counter import RepCounter
 from session_logger import SessionLogger
 
@@ -28,6 +29,7 @@ TOTAL_SETS = 3
 REPS_PER_SET = 10
 REST_SECONDS = 10
 GET_READY_SECONDS = 3
+PAUSE_TIMEOUT_SECONDS = 5.0
 ANGLE_BOUNDARY_TOLERANCE_DEGREES = 5.0
 WINDOW_NAME = "Elbow Rehabilitation Monitor - Live Capture"
 
@@ -86,10 +88,13 @@ def draw_live_ui(
     arm_side: str | None,
     visibility: float,
     valid: bool,
-    tracking_status: str,
+    feedback_message: str,
+    movement_state: str,
     phase: str,
     set_number: int,
     rep_in_set: int,
+    total_sets: int,
+    rep_target: int,
     elapsed_seconds: float,
     session_state: str,
     rest_remaining: int,
@@ -109,7 +114,7 @@ def draw_live_ui(
                 (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.7, angle_color(angle, valid), 2, cv2.LINE_AA)
     pause_label = " (paused)" if session_state == "paused" else ""
     cv2.putText(output,
-                f"Set {set_number}/{TOTAL_SETS} | Rep {rep_in_set}/{REPS_PER_SET}    Phase: {phase}    Time: {format_duration(elapsed_seconds)}{pause_label}",
+                f"Set {set_number}/{total_sets} | Repetitions: {rep_in_set}/{rep_target} | State: {movement_state} | Phase: {phase} | {format_duration(elapsed_seconds)}{pause_label}",
                 (20, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.66, (245, 245, 245), 2, cv2.LINE_AA)
 
     if ready_remaining > 0:
@@ -118,8 +123,11 @@ def draw_live_ui(
     elif session_state == "paused":
         status = "Session paused - press P to resume"
         status_color = (0, 190, 255)
+    elif session_state == "complete":
+        status = feedback_message
+        status_color = (70, 200, 90)
     elif not valid:
-        status = "Arm not fully visible - adjust position"
+        status = feedback_message
         status_color = (0, 0, 255)
     elif session_state == "idle":
         status = "S start | P pause/resume | Q save & end | R reset progress"
@@ -127,14 +135,8 @@ def draw_live_ui(
     elif rest_remaining > 0:
         status = f"Rest between sets: {rest_remaining}s"
         status_color = (0, 190, 255)
-    elif tracking_status != "Tracking stable":
-        status = tracking_status
-        status_color = (0, 0, 255)
-    elif session_state == "complete":
-        status = "Target complete - press Q to save and end"
-        status_color = (70, 200, 90)
     else:
-        status = session_state.title()
+        status = feedback_message
         status_color = (70, 200, 90)
     cv2.putText(output, status, (20, 96), cv2.FONT_HERSHEY_SIMPLEX, 0.57,
                 status_color, 2, cv2.LINE_AA)
@@ -148,7 +150,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Live elbow exercise capture")
     parser.add_argument("--camera", type=int, default=CAMERA_INDEX,
                         help="Webcam device index (default: 0)")
+    parser.add_argument("--target", type=int, default=REPS_PER_SET,
+                        help=f"Repetitions per set, configured before capture (default: {REPS_PER_SET})")
+    parser.add_argument("--sets", type=int, default=TOTAL_SETS,
+                        help=f"Number of sets (default: {TOTAL_SETS})")
     args = parser.parse_args()
+    if args.target < 1:
+        parser.error("--target must be at least 1")
+    if args.sets < 1:
+        parser.error("--sets must be at least 1")
 
     camera = None
     detector = None
@@ -162,12 +172,14 @@ def main() -> int:
     counter = RepCounter(
         flexed_threshold=FLEXED_THRESHOLD_DEGREES,
         extended_threshold=EXTENDED_THRESHOLD_DEGREES,
-        reps_per_set=REPS_PER_SET,
-        total_sets=TOTAL_SETS,
+        reps_per_set=args.target,
+        total_sets=args.sets,
         rest_seconds=REST_SECONDS,
         target_min_angle=TARGET_MIN_ANGLE_DEGREES,
         target_max_angle=TARGET_MAX_ANGLE_DEGREES,
+        pause_timeout_seconds=PAUSE_TIMEOUT_SECONDS,
     )
+    feedback_engine = FeedbackEngine()
     angle_history: deque[float] = deque(maxlen=ANGLE_SMOOTHING_WINDOW)
     try:
         camera = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)
@@ -175,7 +187,8 @@ def main() -> int:
             print(f"Could not open camera {args.camera}. Check permissions, close other camera apps, or try --camera 1.")
             return 1
         detector = PoseDetector(min_visibility=POSE_MIN_VISIBILITY)
-        print("Camera ready. Use S to start, P to pause/resume, Q to save and end, R to reset set/rep progress.")
+        print(f"Camera ready. Target: {args.target} reps x {args.sets} sets. "
+              "Use S to start, P to pause/resume, Q to save and end, R to reset progress.")
 
         while True:
             ok, frame = camera.read()
@@ -193,9 +206,10 @@ def main() -> int:
                         "flexed_threshold_degrees": FLEXED_THRESHOLD_DEGREES,
                         "extended_threshold_degrees": EXTENDED_THRESHOLD_DEGREES,
                         "angle_smoothing_window": ANGLE_SMOOTHING_WINDOW,
-                        "total_sets": TOTAL_SETS,
-                        "reps_per_set_target": REPS_PER_SET,
+                        "total_sets": args.sets,
+                        "reps_per_set_target": args.target,
                         "rest_seconds": REST_SECONDS,
+                        "pause_timeout_seconds": PAUSE_TIMEOUT_SECONDS,
                     },
                 )
                 session_start = now
@@ -210,13 +224,14 @@ def main() -> int:
                      and observation.arm_side is not None)
             smoothed = smooth_angle(angle_history, observation.angle_degrees, valid)
 
+            event = None
             if state == "active" and logger is not None:
                 if valid and smoothed is not None:
                     event = counter.update(smoothed, now)
                     if event is not None:
                         logger.log_rep(event)
                 else:
-                    counter.invalidate_tracking()
+                    counter.invalidate_tracking(now)
 
                 elapsed = max(0.0, now - session_start - paused_total)
                 logger.log_frame(
@@ -226,6 +241,7 @@ def main() -> int:
                     smoothed_angle=smoothed,
                     visibility=observation.visibility,
                     phase=counter.phase,
+                    movement_state=counter.state,
                     rep_count=logger.completed_rep_count,
                     set_number=counter.set_number,
                     valid_frame=valid,
@@ -242,16 +258,29 @@ def main() -> int:
                 elapsed = 0.0
 
             rest_remaining = counter.rest_remaining(now)
+            message = feedback_engine.message(
+                tracking_valid=valid,
+                movement_state=counter.state,
+                phase=counter.phase,
+                arm_ready=counter.is_armed,
+                now=now,
+                rep_number=logger.completed_rep_count if state == "active" and logger is not None and event else None,
+                partial_movement=counter.partial_movement,
+                session_paused=state == "paused",
+            )
             ui = draw_live_ui(
                 annotated,
                 angle=smoothed if valid else observation.angle_degrees,
                 arm_side=observation.arm_side,
                 visibility=observation.visibility,
                 valid=valid,
-                tracking_status=observation.status,
+                feedback_message=message,
+                movement_state=("PAUSED" if state == "paused" else counter.state),
                 phase=counter.phase,
                 set_number=counter.set_number,
                 rep_in_set=counter.reps_in_set,
+                total_sets=args.sets,
+                rep_target=args.target,
                 elapsed_seconds=elapsed,
                 session_state=state_for_display,
                 rest_remaining=rest_remaining,
@@ -269,7 +298,7 @@ def main() -> int:
                 if state == "active":
                     state = "paused"
                     paused_at = time.monotonic()
-                    counter.invalidate_tracking()
+                    counter.invalidate_tracking(paused_at)
                     angle_history.clear()
                 elif state == "paused":
                     resumed_at = time.monotonic()
