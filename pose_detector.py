@@ -38,8 +38,8 @@ class PoseDetector:
         self._connections = mp.solutions.pose.POSE_CONNECTIONS
         self._landmark = mp.solutions.pose.PoseLandmark
 
-    def process(self, frame_bgr) -> tuple[object, PoseObservation]:
-        """Return an annotated BGR frame and its measured elbow observation."""
+    def process(self, frame_bgr, arm_side: str | None = None) -> tuple[object, PoseObservation]:
+        """Return an annotated frame, optionally measuring a requested anatomical arm."""
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         frame_rgb.flags.writeable = False
         result = self._pose.process(frame_rgb)
@@ -69,39 +69,51 @@ class PoseDetector:
             points = [landmarks[index.value] for index in indices]
             visibility = min(float(point.visibility) for point in points)
             candidates.append((visibility, side, indices, points))
-        best = max(candidates, key=lambda item: item[0])
         by_side = {candidate[1]: candidate for candidate in candidates}
-        current = by_side.get(self._selected_side)
-
-        # Keep the current anatomical side through small frame-to-frame
-        # confidence changes. Switch only after a clear, sustained improvement,
-        # or immediately if the current arm is no longer reliably visible.
-        if current is None or current[0] < self.min_visibility:
-            selected = best if best[0] >= self.min_visibility else None
-            self._challenger_side = None
-            self._challenger_frames = 0
-        elif best[1] == self._selected_side or best[0] <= current[0] + 0.15:
-            selected = current
+        if arm_side is not None:
+            requested_side = arm_side.strip().upper()
+            if requested_side not in by_side:
+                raise ValueError("arm_side must be LEFT, RIGHT, or None")
+            selected = by_side[requested_side]
+            self._selected_side = requested_side
             self._challenger_side = None
             self._challenger_frames = 0
         else:
-            if self._challenger_side == best[1]:
-                self._challenger_frames += 1
-            else:
-                self._challenger_side = best[1]
-                self._challenger_frames = 1
-            if self._challenger_frames >= 5:
-                selected = best
+            best = max(candidates, key=lambda item: item[0])
+            current = by_side.get(self._selected_side)
+
+            # Keep the current anatomical side through small frame-to-frame
+            # confidence changes. Switch only after a clear, sustained improvement,
+            # or immediately if the current arm is no longer reliably visible.
+            if current is None or current[0] < self.min_visibility:
+                selected = best if best[0] >= self.min_visibility else None
+                self._challenger_side = None
+                self._challenger_frames = 0
+            elif best[1] == self._selected_side or best[0] <= current[0] + 0.15:
+                selected = current
                 self._challenger_side = None
                 self._challenger_frames = 0
             else:
-                selected = current
+                if self._challenger_side == best[1]:
+                    self._challenger_frames += 1
+                else:
+                    self._challenger_side = best[1]
+                    self._challenger_frames = 1
+                if self._challenger_frames >= 5:
+                    selected = best
+                    self._challenger_side = None
+                    self._challenger_frames = 0
+                else:
+                    selected = current
 
         if selected is None:
             self._selected_side = None
-            return annotated, PoseObservation(None, None, best[0], "Arm landmarks unclear")
+            visibility = max(candidate[0] for candidate in candidates)
+            return annotated, PoseObservation(None, None, visibility, "Arm landmarks unclear")
 
         visibility, side, indices, points = selected
+        if visibility < self.min_visibility:
+            return annotated, PoseObservation(None, side, visibility, "Arm landmarks unclear")
         self._selected_side = side
 
         height, width = annotated.shape[:2]

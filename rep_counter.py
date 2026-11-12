@@ -38,6 +38,7 @@ class RepCounter:
         target_min_angle: float,
         target_max_angle: float,
         pause_timeout_seconds: float = 5.0,
+        total_target_repetitions: int | None = None,
     ) -> None:
         if not 0 < flexed_threshold < extended_threshold < 180:
             raise ValueError("Movement thresholds must satisfy 0 < flexed < extended < 180")
@@ -47,6 +48,11 @@ class RepCounter:
             raise ValueError("Target angle range must be within 0..180 degrees")
         if pause_timeout_seconds <= 0:
             raise ValueError("Pause timeout must be greater than zero")
+        max_repetitions = reps_per_set * total_sets
+        total_target_repetitions = (max_repetitions if total_target_repetitions is None
+                                    else total_target_repetitions)
+        if not 1 <= total_target_repetitions <= max_repetitions:
+            raise ValueError("Total repetition target must fit within the configured sets")
         self.flexed_threshold = flexed_threshold
         self.extended_threshold = extended_threshold
         self.reps_per_set = reps_per_set
@@ -55,6 +61,7 @@ class RepCounter:
         self.target_min_angle = target_min_angle
         self.target_max_angle = target_max_angle
         self.pause_timeout_seconds = pause_timeout_seconds
+        self.total_target_repetitions = total_target_repetitions
         self.reset_progress()
 
     def reset_progress(self) -> None:
@@ -74,6 +81,18 @@ class RepCounter:
         self._tracking_paused = False
         self._pause_started_at: float | None = None
         self.partial_movement = False
+
+    def reset_movement(self) -> bool:
+        """Discard the active partial cycle while preserving session totals."""
+        incomplete = self._rep_started_at is not None
+        self._armed = False
+        self._cancel_current_rep()
+        self.phase = "Extended"
+        self.state = "READY"
+        self._tracking_paused = False
+        self._pause_started_at = None
+        self.partial_movement = False
+        return incomplete
 
     @property
     def is_armed(self) -> bool:
@@ -95,20 +114,23 @@ class RepCounter:
         if self._pause_started_at is not None:
             self._pause_started_at += paused_seconds
 
-    def invalidate_tracking(self, now: float) -> None:
+    def invalidate_tracking(self, now: float) -> bool:
         """Pause counting and discard any incomplete movement when tracking is bad."""
         if self.is_complete:
             self.state = "COMPLETED"
-            return
+            return False
+        incomplete = False
         if not self._tracking_paused:
             self._tracking_paused = True
             self._pause_started_at = now
             self._armed = False
+            incomplete = self._rep_started_at is not None
             self._cancel_current_rep()
         if self._pause_started_at is not None and now - self._pause_started_at >= self.pause_timeout_seconds:
             self.state = "READY"
         else:
             self.state = "PAUSED"
+        return incomplete
 
     def update(self, angle: float, now: float) -> RepRecord | None:
         """Consume one valid smoothed angle, changing state or returning one rep."""
@@ -210,7 +232,10 @@ class RepCounter:
         self._cancel_current_rep()
         self.phase = "Extended"
         self.state = "READY"
-        if self.reps_in_set >= self.reps_per_set:
+        if self.total_reps >= self.total_target_repetitions:
+            self.is_complete = True
+            self.state = "COMPLETED"
+        elif self.reps_in_set >= self.reps_per_set:
             if self.set_number >= self.total_sets:
                 self.is_complete = True
                 self.state = "COMPLETED"
