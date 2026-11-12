@@ -9,7 +9,10 @@ echo   Elbow Rehabilitation Monitoring System
 echo ==========================================
 echo.
 
-if not exist ".venv\Scripts\python.exe" (
+set "PYTHON=.venv\Scripts\python.exe"
+if exist ".venv-ui\Scripts\python.exe" set "PYTHON=.venv-ui\Scripts\python.exe"
+
+if not exist "%PYTHON%" (
     echo ERROR: Virtual environment not found.
     echo Please create .venv and install requirements first.
     pause
@@ -17,14 +20,14 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 echo Checking Python environment...
-".venv\Scripts\python.exe" --version
+"%PYTHON%" --version
 
 echo.
-echo Starting the system...
+echo Starting the Streamlit application...
 echo Keep this window open while using the application.
 echo.
 
-".venv\Scripts\python.exe" app.py
+"%PYTHON%" -m streamlit run app.py
 
 echo.
 echo The application has stopped.
