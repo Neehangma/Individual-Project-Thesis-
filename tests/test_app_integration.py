@@ -22,6 +22,7 @@ class StreamlitAppTests(unittest.TestCase):
         for page_path, expected_title in (
             ("app_pages/monitoring.py", "Exercise Monitoring"),
             ("app_pages/results.py", "Session Results"),
+            ("app_pages/analytics.py", "Research Analytics"),
             ("app_pages/about.py", "About the System"),
             ("app_pages/home.py", "Elbow Rehabilitation Exercise Monitoring System"),
         ):

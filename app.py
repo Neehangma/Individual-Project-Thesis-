@@ -41,6 +41,7 @@ pages = [
     st.Page("app_pages/home.py", title="Home", icon="🏠", default=True),
     st.Page("app_pages/monitoring.py", title="Exercise Monitoring", icon="🎥"),
     st.Page("app_pages/results.py", title="Session Results", icon="📈"),
+    st.Page("app_pages/analytics.py", title="Research Analytics", icon="📊"),
     st.Page("app_pages/about.py", title="About the System", icon="ℹ️"),
 ]
 navigation = st.navigation(pages, position="sidebar", expanded=True)

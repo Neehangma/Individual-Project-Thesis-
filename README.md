@@ -23,7 +23,16 @@ To run with the verification environment created in this workspace, use `.\.venv
 - **Home** introduces the system and camera setup.
 - **Exercise Monitoring** starts and controls a real webcam session.
 - **Session Results** reads persisted summaries and observations, charts a selected session, and downloads its CSV records.
+- **Research Analytics** filters the stored research records, shows descriptive system metrics, compares sessions, and exports the filtered tables.
 - **About the System** describes the method and its limitations.
+
+## Research Analytics measures
+
+The dashboard reads `data/session_summaries.csv` and `data/session_observations.csv` on each page run. Participant and session totals count unique anonymised IDs across both files, so an observation-only session is still represented. Completed/interrupted/cancelled counts and session duration statistics come from saved summaries. Completed repetition totals prefer one value per summary; for a session with observations but no summary, the latest cumulative observation count is used once. Average repetitions is the mean of those per-session values. Session completion rate is shown only when every filtered session has a known saved status.
+
+An angle observation is valid only when it parses to a finite number from 0 through 180 degrees. Blanks, invalid strings, infinities, and out-of-range values count as invalid and are excluded from angle statistics. Tracking success is the share of filtered observations with a known tracking status marked `Tracking stable`. Date filtering uses a saved session start time, or the first available observation timestamp when there is no summary. Filtering and downloads operate on copies and never rewrite the research CSVs; exact duplicate observation rows are suppressed in the analytics view while timestamp-distinct samples are retained.
+
+The charts compare actual saved angle observations, per-session repetition targets and counts, summary durations and statuses, and tracking status records. No clinical angle accuracy or repetition-count accuracy is calculated: those require independent ground-truth angle measurements and manually verified repetition counts, respectively.
 
 ## Live session steps
 
@@ -68,10 +77,11 @@ python -m unittest discover -s tests -v
 
 Manual end-to-end checklist:
 
-1. Start `python -m streamlit run app.py`; verify Home, Monitoring, Results, and About navigation.
+1. Start `python -m streamlit run app.py`; verify Home, Monitoring, Results, Research Analytics, and About navigation.
 2. On Monitoring, use a study code and select LEFT. Start with the selected arm visible. Check that landmarks, an updating elbow angle, confidence, and stable/lost tracking status appear.
 3. Slowly bend and extend through the configured thresholds; confirm the count increments once only after a complete cycle. Repeat with RIGHT selected and compare the anatomical label.
 4. Pause and resume; confirm the timer excludes the pause and no measurements are collected while paused. End and save.
 5. Open Session Results; verify the saved session summary, angle chart (when valid samples exist), and both CSV downloads.
 6. Restart the application and confirm the previous session remains listed. Try starting two browser sessions and confirm the second receives the camera-in-use message.
 7. Test with the webcam unavailable (close the camera device or choose no accessible camera) and verify the app shows a readable error rather than crashing.
+8. On Research Analytics, exercise the participant, session, arm, status, and date filters; download both filtered CSVs and verify the originals remain unchanged.
