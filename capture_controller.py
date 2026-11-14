@@ -10,9 +10,6 @@ from uuid import uuid4
 
 import cv2
 import numpy as np
-from PIL import Image
-from io import BytesIO
-
 from camera_registry import CameraRegistry
 from data_logger import DataLogger
 from feedback_engine import FeedbackEngine
@@ -67,7 +64,8 @@ class CaptureController:
         self.feedback_engine = FeedbackEngine()
         self.angle_history: deque[float] = deque(maxlen=ANGLE_SMOOTHING_WINDOW)
         self.state = "idle"
-        self.last_frame: bytes | None = None
+        # Streamlit receives the latest annotated frame directly as RGB pixels.
+        self.last_frame: np.ndarray | None = None
         self.frame_size: tuple[int, int] | None = None
         self.raw_angle: float | None = None
         self.smoothed_angle: float | None = None
@@ -161,14 +159,9 @@ class CaptureController:
                     or annotated.dtype != np.uint8):
                 raise ValueError("Pose processing returned an invalid camera frame")
             height, width = annotated.shape[:2]
-            rgb_display_frame = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-            encoded = BytesIO()
-            Image.fromarray(rgb_display_frame).save(
-                encoded, format="JPEG", quality=88, optimize=False
+            rgb_display_frame = np.ascontiguousarray(
+                cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
             )
-            frame_bytes = encoded.getvalue()
-            if not frame_bytes.startswith(b"\xff\xd8") or not frame_bytes.endswith(b"\xff\xd9"):
-                raise ValueError("JPEG encoding did not produce a complete image")
         except Exception as exc:
             self.last_error = f"Could not process or display the live camera frame: {exc}"
             self.end()
@@ -199,7 +192,7 @@ class CaptureController:
 
         self.visibility = observation.visibility
         self.frame_size = (width, height)
-        self.last_frame = frame_bytes
+        self.last_frame = rgb_display_frame
         if self.state == "ready" and now >= self.ready_until:
             self.state = "active"
             self.feedback_message = "Tracking started. Extend your elbow to begin."

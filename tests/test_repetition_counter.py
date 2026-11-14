@@ -124,6 +124,10 @@ class RepetitionCounterTests(unittest.TestCase):
             "Tracking lost. Reposition yourself.",
         )
         self.assertEqual(
+            feedback.message(tracking_valid=True, movement_state="PAUSED", phase="Extended", arm_ready=False, now=0.5),
+            "Tracking stable. Hold your position while movement tracking recovers.",
+        )
+        self.assertEqual(
             feedback.message(tracking_valid=True, movement_state="FLEXION", phase="Flexing", arm_ready=True, now=1),
             "Bend your elbow.",
         )

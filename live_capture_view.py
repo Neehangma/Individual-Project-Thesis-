@@ -9,12 +9,16 @@ import streamlit as st
 from capture_controller import CaptureController
 
 
-def render_camera_frame(image_placeholder, jpeg_bytes: bytes) -> None:
-    """Update a persistent Streamlit placeholder with validated JPEG image bytes."""
-    if not isinstance(jpeg_bytes, bytes) or not jpeg_bytes.startswith(b"\xff\xd8") or not jpeg_bytes.endswith(b"\xff\xd9"):
-        raise ValueError("The webcam display frame is not a complete JPEG image")
+def render_camera_frame(image_placeholder, rgb_frame) -> None:
+    """Update the live placeholder from a validated RGB NumPy camera frame."""
+    import numpy as np
+
+    if (not isinstance(rgb_frame, np.ndarray) or rgb_frame.size == 0
+            or rgb_frame.ndim != 3 or rgb_frame.shape[2] != 3
+            or rgb_frame.dtype != np.uint8):
+        raise ValueError("The webcam display frame must be a non-empty uint8 RGB image")
     image_placeholder.image(
-        jpeg_bytes, caption="Live pose tracking", output_format="JPEG", width="stretch"
+        rgb_frame, caption="Live pose tracking", channels="RGB", width="stretch"
     )
 
 

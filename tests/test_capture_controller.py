@@ -54,7 +54,7 @@ class CaptureControllerTests(unittest.TestCase):
     def test_camera_lease_and_completed_session_are_persisted(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             registry = CameraRegistry()
-            camera = _FakeCamera()
+            camera = _FakeCamera(frame=np.full((100, 100, 3), (12, 80, 200), dtype=np.uint8))
             with patch("capture_controller.cv2.VideoCapture", return_value=camera), \
                  patch("capture_controller.PoseDetector", _FakeDetector), \
                  patch("capture_controller.GET_READY_SECONDS", 0), \
@@ -70,10 +70,13 @@ class CaptureControllerTests(unittest.TestCase):
                 self.assertEqual(controller.state, "completed")
                 self.assertEqual(controller.completed_repetitions, 1)
                 self.assertTrue(camera.released)
-                self.assertIsInstance(controller.last_frame, bytes)
-                decoded = cv2.imdecode(np.frombuffer(controller.last_frame, dtype=np.uint8), cv2.IMREAD_COLOR)
-                self.assertIsNotNone(decoded)
-                self.assertEqual(decoded.shape, (100, 100, 3))
+                self.assertIsInstance(controller.last_frame, np.ndarray)
+                self.assertEqual(controller.last_frame.shape, (100, 100, 3))
+                self.assertEqual(controller.last_frame.dtype, np.uint8)
+                self.assertTrue(controller.last_frame.flags.c_contiguous)
+                np.testing.assert_array_equal(
+                    controller.last_frame[0, 0], np.array([200, 80, 12], dtype=np.uint8)
+                )
 
             with (Path(temp_dir) / "session_summaries.csv").open(newline="", encoding="utf-8") as file:
                 summaries = list(csv.DictReader(file))

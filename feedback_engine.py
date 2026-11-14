@@ -32,8 +32,10 @@ class FeedbackEngine:
             return "Session paused. Press P to resume."
         if movement_state == "COMPLETED":
             return "Target reached. Session complete."
-        if not tracking_valid or movement_state == "PAUSED":
+        if not tracking_valid:
             return "Tracking lost. Reposition yourself."
+        if movement_state == "PAUSED":
+            return "Tracking stable. Hold your position while movement tracking recovers."
 
         if rep_number is not None:
             self._event_message = f"Repetition completed: {rep_number}"
