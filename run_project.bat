@@ -10,7 +10,6 @@ echo ==========================================
 echo.
 
 set "PYTHON=.venv\Scripts\python.exe"
-if exist ".venv-ui\Scripts\python.exe" set "PYTHON=.venv-ui\Scripts\python.exe"
 
 if not exist "%PYTHON%" (
     echo ERROR: Virtual environment not found.

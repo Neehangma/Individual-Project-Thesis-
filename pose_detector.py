@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import cv2
 import mediapipe as mp
+import numpy as np
 
 from angle_calculator import calculate_elbow_angle
 
@@ -40,6 +42,12 @@ class PoseDetector:
 
     def process(self, frame_bgr, arm_side: str | None = None) -> tuple[object, PoseObservation]:
         """Return an annotated frame, optionally measuring a requested anatomical arm."""
+        if (not isinstance(frame_bgr, np.ndarray) or frame_bgr.size == 0
+                or frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3):
+            raise ValueError("Expected a non-empty three-channel BGR camera frame")
+        if frame_bgr.dtype.name != "uint8":
+            raise ValueError("Expected an 8-bit BGR camera frame")
+        frame_bgr = frame_bgr.copy()
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         frame_rgb.flags.writeable = False
         result = self._pose.process(frame_rgb)
@@ -67,7 +75,11 @@ class PoseDetector:
         candidates = []
         for side, indices in arms.items():
             points = [landmarks[index.value] for index in indices]
-            visibility = min(float(point.visibility) for point in points)
+            visibility = min(
+                max(0.0, min(1.0, float(point.visibility)))
+                if math.isfinite(float(point.visibility)) else 0.0
+                for point in points
+            )
             candidates.append((visibility, side, indices, points))
         by_side = {candidate[1]: candidate for candidate in candidates}
         if arm_side is not None:
@@ -109,21 +121,19 @@ class PoseDetector:
         if selected is None:
             self._selected_side = None
             visibility = max(candidate[0] for candidate in candidates)
+            for _, side, indices, points in candidates:
+                self._draw_arm_landmarks(annotated, side, indices, points)
             return annotated, PoseObservation(None, None, visibility, "Arm landmarks unclear")
 
         visibility, side, indices, points = selected
+        self._draw_arm_landmarks(annotated, side, indices, points)
         if visibility < self.min_visibility:
             return annotated, PoseObservation(None, side, visibility, "Arm landmarks unclear")
         self._selected_side = side
 
         height, width = annotated.shape[:2]
-        pixels = []
-        for index, point in zip(indices, points):
-            x, y = int(point.x * width), int(point.y * height)
-            pixels.append((x, y))
-            cv2.circle(annotated, (x, y), 8, (0, 145, 255), -1)
-            cv2.putText(annotated, index.name.replace("_", " ").title(), (x + 8, y - 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+        elbow_x = int(points[1].x * width)
+        elbow_y = int(points[1].y * height)
         try:
             angle = calculate_elbow_angle(
                 (points[0].x, points[0].y),
@@ -133,9 +143,37 @@ class PoseDetector:
         except ValueError:
             return annotated, PoseObservation(None, side, visibility, "Arm landmarks unclear")
 
-        cv2.putText(annotated, f"{angle:.1f} deg", (pixels[1][0] + 12, pixels[1][1] + 28),
+        cv2.putText(annotated, f"{angle:.1f} deg", (elbow_x + 12, elbow_y + 28),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2, cv2.LINE_AA)
         return annotated, PoseObservation(angle, side, visibility, "Tracking stable")
+
+    @staticmethod
+    def _draw_arm_landmarks(frame, side, indices, points) -> None:
+        """Highlight visible shoulder, elbow, wrist, and their connecting arm segments."""
+        height, width = frame.shape[:2]
+        color = (0, 145, 255) if side == "LEFT" else (255, 145, 0)
+        visible_points: list[tuple[int, int] | None] = []
+        for point in points:
+            confidence = float(point.visibility)
+            coordinates_finite = math.isfinite(float(point.x)) and math.isfinite(float(point.y))
+            visible = math.isfinite(confidence) and confidence >= 0.10 and coordinates_finite
+            if not visible:
+                visible_points.append(None)
+                continue
+            x = max(0, min(width - 1, int(float(point.x) * width)))
+            y = max(0, min(height - 1, int(float(point.y) * height)))
+            visible_points.append((x, y))
+
+        for start, end in ((0, 1), (1, 2)):
+            if visible_points[start] is not None and visible_points[end] is not None:
+                cv2.line(frame, visible_points[start], visible_points[end], color, 4, cv2.LINE_AA)
+        for index, point, pixel in zip(indices, points, visible_points):
+            if pixel is None:
+                continue
+            cv2.circle(frame, pixel, 8, color, -1, cv2.LINE_AA)
+            label = f"{side} {index.name.split('_')[1]}"
+            cv2.putText(frame, label, (pixel[0] + 8, pixel[1] - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
     def close(self) -> None:
         self._pose.close()

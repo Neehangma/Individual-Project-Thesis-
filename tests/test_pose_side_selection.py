@@ -48,10 +48,11 @@ class PoseSideSelectionTests(unittest.TestCase):
     def test_unreliable_requested_arm_is_not_replaced_by_other_side(self):
         self._set_arm("LEFT", ((0.2, 0.2), (0.2, 0.4), (0.4, 0.4)), visibility=0.9)
         self._set_arm("RIGHT", ((0.6, 0.2), (0.6, 0.4), (0.6, 0.6)), visibility=0.2)
-        _, observation = self.detector.process(self.frame, arm_side="RIGHT")
+        annotated, observation = self.detector.process(self.frame, arm_side="RIGHT")
         self.assertIsNone(observation.angle_degrees)
         self.assertEqual(observation.arm_side, "RIGHT")
         self.assertEqual(observation.status, "Arm landmarks unclear")
+        self.assertTrue(np.any(annotated != self.frame))
 
 
 if __name__ == "__main__":

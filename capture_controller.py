@@ -10,6 +10,8 @@ from uuid import uuid4
 
 import cv2
 import numpy as np
+from PIL import Image
+from io import BytesIO
 
 from camera_registry import CameraRegistry
 from data_logger import DataLogger
@@ -65,7 +67,8 @@ class CaptureController:
         self.feedback_engine = FeedbackEngine()
         self.angle_history: deque[float] = deque(maxlen=ANGLE_SMOOTHING_WINDOW)
         self.state = "idle"
-        self.last_frame: np.ndarray | None = None
+        self.last_frame: bytes | None = None
+        self.frame_size: tuple[int, int] | None = None
         self.raw_angle: float | None = None
         self.smoothed_angle: float | None = None
         self.arm_side: str | None = None
@@ -136,8 +139,16 @@ class CaptureController:
         if not self.is_running or self.camera is None or self.detector is None:
             return False
         ok, frame = self.camera.read()
-        if not ok:
-            self.last_error = "The webcam stopped returning frames. The session was saved and the camera released."
+        if not ok or not isinstance(frame, np.ndarray) or frame.size == 0:
+            self.last_error = "The webcam returned an empty frame. The session was saved and the camera released."
+            self.end()
+            self.state = "error"
+            return False
+        if frame.ndim != 3 or frame.shape[2] != 3 or frame.dtype != np.uint8:
+            self.last_error = (
+                f"The webcam returned an unsupported frame ({getattr(frame, 'shape', None)}, "
+                f"{getattr(frame, 'dtype', None)}). The session was saved and the camera released."
+            )
             self.end()
             self.state = "error"
             return False
@@ -145,8 +156,21 @@ class CaptureController:
         now = time.monotonic()
         try:
             annotated, observation = self.detector.process(frame, arm_side=self.session.arm_side)
+            if (not isinstance(annotated, np.ndarray) or annotated.size == 0
+                    or annotated.ndim != 3 or annotated.shape[2] != 3
+                    or annotated.dtype != np.uint8):
+                raise ValueError("Pose processing returned an invalid camera frame")
+            height, width = annotated.shape[:2]
+            rgb_display_frame = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+            encoded = BytesIO()
+            Image.fromarray(rgb_display_frame).save(
+                encoded, format="JPEG", quality=88, optimize=False
+            )
+            frame_bytes = encoded.getvalue()
+            if not frame_bytes.startswith(b"\xff\xd8") or not frame_bytes.endswith(b"\xff\xd9"):
+                raise ValueError("JPEG encoding did not produce a complete image")
         except Exception as exc:
-            self.last_error = f"Pose tracking failed: {exc}"
+            self.last_error = f"Could not process or display the live camera frame: {exc}"
             self.end()
             self.state = "error"
             return False
@@ -169,11 +193,13 @@ class CaptureController:
             self.tracking_status = (
                 "Person not detected. Move into the camera view."
                 if observation.status == "Person not detected"
-                else "Arm not fully visible. Adjust your position."
+                else f"Arm not fully visible (confidence {observation.visibility:.2f}). "
+                     "Keep shoulder, elbow, and wrist in view."
             )
 
         self.visibility = observation.visibility
-        self.last_frame = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+        self.frame_size = (width, height)
+        self.last_frame = frame_bytes
         if self.state == "ready" and now >= self.ready_until:
             self.state = "active"
             self.feedback_message = "Tracking started. Extend your elbow to begin."

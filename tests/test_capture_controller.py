@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import cv2
 import numpy as np
 
 from camera_registry import CameraBusyError, CameraRegistry
@@ -18,14 +19,15 @@ from pose_detector import PoseObservation
 class _FakeCamera:
     """Provide test-only frames through the same OpenCV capture interface."""
 
-    def __init__(self, *_args, **_kwargs):
+    def __init__(self, *_args, frame=None, **_kwargs):
         self.released = False
+        self.frame = np.zeros((100, 100, 3), dtype=np.uint8) if frame is None else frame
 
     def isOpened(self):
         return True
 
     def read(self):
-        return True, np.zeros((100, 100, 3), dtype=np.uint8)
+        return True, self.frame
 
     def release(self):
         self.released = True
@@ -68,6 +70,10 @@ class CaptureControllerTests(unittest.TestCase):
                 self.assertEqual(controller.state, "completed")
                 self.assertEqual(controller.completed_repetitions, 1)
                 self.assertTrue(camera.released)
+                self.assertIsInstance(controller.last_frame, bytes)
+                decoded = cv2.imdecode(np.frombuffer(controller.last_frame, dtype=np.uint8), cv2.IMREAD_COLOR)
+                self.assertIsNotNone(decoded)
+                self.assertEqual(decoded.shape, (100, 100, 3))
 
             with (Path(temp_dir) / "session_summaries.csv").open(newline="", encoding="utf-8") as file:
                 summaries = list(csv.DictReader(file))
@@ -78,6 +84,25 @@ class CaptureControllerTests(unittest.TestCase):
             self.assertEqual(summaries[0]["session_status"], "completed")
             self.assertTrue(observations)
             self.assertTrue(all(row["session_id"] == session.session_id for row in observations))
+
+    def test_empty_camera_frame_saves_session_and_releases_camera(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            registry = CameraRegistry()
+            camera = _FakeCamera(frame=None)
+            camera.frame = None
+            with patch("capture_controller.cv2.VideoCapture", return_value=camera), \
+                 patch("capture_controller.PoseDetector", _FakeDetector):
+                controller = CaptureController(registry, data_dir=Path(temp_dir))
+                session = controller.start("TEST02", "RIGHT", 1)
+                self.assertFalse(controller.tick())
+                self.assertEqual(controller.state, "error")
+                self.assertTrue(camera.released)
+
+            with (Path(temp_dir) / "session_summaries.csv").open(newline="", encoding="utf-8") as file:
+                summaries = list(csv.DictReader(file))
+            self.assertEqual(len(summaries), 1)
+            self.assertEqual(summaries[0]["session_id"], session.session_id)
+            self.assertEqual(summaries[0]["session_status"], "cancelled")
 
 
 if __name__ == "__main__":

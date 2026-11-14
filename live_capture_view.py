@@ -9,6 +9,15 @@ import streamlit as st
 from capture_controller import CaptureController
 
 
+def render_camera_frame(image_placeholder, jpeg_bytes: bytes) -> None:
+    """Update a persistent Streamlit placeholder with validated JPEG image bytes."""
+    if not isinstance(jpeg_bytes, bytes) or not jpeg_bytes.startswith(b"\xff\xd8") or not jpeg_bytes.endswith(b"\xff\xd9"):
+        raise ValueError("The webcam display frame is not a complete JPEG image")
+    image_placeholder.image(
+        jpeg_bytes, caption="Live pose tracking", output_format="JPEG", width="stretch"
+    )
+
+
 @st.fragment(run_every=0.15)
 def _live_capture_fragment(controller: CaptureController) -> None:
     """Process one real frame and display the active session's camera/status."""
@@ -36,10 +45,14 @@ def _live_capture_fragment(controller: CaptureController) -> None:
     st.markdown("#### Live camera")
     image_col, state_col = st.columns([1.65, 1], vertical_alignment="center")
     with image_col:
+        image_placeholder = st.empty()
         if controller.last_frame is not None:
-            st.image(controller.last_frame, caption="Live pose tracking", width="stretch")
+            render_camera_frame(image_placeholder, controller.last_frame)
+            if controller.frame_size:
+                frame_width, frame_height = controller.frame_size
+                st.caption(f"Live camera frame · {frame_width} × {frame_height}")
         else:
-            st.info("Waiting for the first camera frame…")
+            image_placeholder.info("Waiting for the first camera frame…")
     with state_col:
         angle_text = f"{controller.smoothed_angle:.1f}°" if controller.smoothed_angle is not None else "—"
         st.metric("Elbow angle", angle_text)
